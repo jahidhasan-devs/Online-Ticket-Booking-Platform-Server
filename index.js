@@ -1,5 +1,5 @@
-const dns = require("node:dns");
-dns.setServers(["1.1.1.1", "1.0.0.1"]);
+// const dns = require("node:dns");
+// dns.setServers(["1.1.1.1", "1.0.0.1"]);
 
 const express = require("express");
 const dontenv = require("dotenv");
@@ -29,7 +29,9 @@ const client = new MongoClient(uri, {
   },
 });
 
-const JWKS = createRemoteJWKSet(new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),);
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+);
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -57,11 +59,10 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-
 //Role ta seller ki check kore aii function
 const sellerVerify = async (req, res, next) => {
   const user = req.user;
-  if (user.role !== "seller" || user.plan != "pro") {
+  if (user.role !== "vendor" || user.plan != "pro") {
     return res.status(403).json({ msg: "Forbidden" });
   }
   next();
@@ -75,7 +76,6 @@ async function run() {
     const userCollection = db.collection("user");
     const productCollection = db.collection("products");
 
-    
     app.post("/subscription", async (req, res) => {
       const { sessionId, userId, priceId } = req.body;
 
@@ -84,7 +84,7 @@ async function run() {
         return res.json({ msg: "Already exist!" });
       }
 
-      await subscriptionsCollection.insertOne({sessionId,userId, priceId,});
+      await subscriptionsCollection.insertOne({ sessionId, userId, priceId });
 
       //update user role
       await userCollection.updateOne(
@@ -95,11 +95,13 @@ async function run() {
       res.json({ msg: "Payment successfull!" });
     });
 
-
-
-    app.post("/seller/products", verifyToken, sellerVerify, async (req, res) => {
+    app.post(
+      "/seller/products",
+      verifyToken,
+      sellerVerify,
+      async (req, res) => {
         const data = req.body;
-        
+
         const result = await productCollection.insertOne({
           ...data,
           userId: req.user.id,
@@ -120,7 +122,9 @@ async function run() {
         .limit(Number(limit))
 
         .toArray();
-      const totalData = await productCollection.countDocuments({userId: req.user.id,});
+      const totalData = await productCollection.countDocuments({
+        userId: req.user.id,
+      });
       const totalPage = Math.ceil(totalData / Number(limit));
 
       res.send({ data: result, page: Number(page), totalPage });
@@ -150,9 +154,7 @@ async function run() {
       res.send(result);
     });
 
-
     //TODO: create payment data store api
-
 
     await client.db("admin").command({ ping: 1 });
     console.log(

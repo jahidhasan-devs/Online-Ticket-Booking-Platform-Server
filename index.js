@@ -146,7 +146,8 @@ async function run() {
     });
 
     // 1. Admin: ticket Advertise করা
-    app.post("/admin/advertised-tickets/:ticketId",
+    app.post(
+      "/admin/advertised-tickets/:ticketId",
       verifyToken,
       adminVerify,
       async (req, res) => {
@@ -221,7 +222,8 @@ async function run() {
     );
 
     // 2. Admin: ticket Unadvertise করা
-    app.delete("/admin/advertised-tickets/:ticketId",
+    app.delete(
+      "/admin/advertised-tickets/:ticketId",
       verifyToken,
       adminVerify,
       async (req, res) => {
@@ -468,6 +470,206 @@ async function run() {
         });
       }
     });
+
+    //My- Tickets
+    app.get("/vendor/my-tickets",
+      verifyToken,
+      sellerVerify,
+      async (req, res) => {
+        try {
+          const tickets = await productCollection
+            .find({ userId: req.user.id })
+            .toArray();
+
+          res.send(tickets);
+        } catch (error) {
+          console.error(error);
+          res.status(500).send({
+            message: "Failed to get tickets",
+          });
+        }
+      },
+    );
+
+    // 1. একটি ticket-এর তথ্য আনা
+    app.get("/vendor/my-tickets/:id",
+      verifyToken,
+      sellerVerify,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: "Invalid ticket ID" });
+          }
+
+          const ticket = await productCollection.findOne({
+            _id: new ObjectId(id),
+            userId: req.user.id,
+          });
+
+          if (!ticket) {
+            return res.status(404).send({ message: "Ticket not found" });
+          }
+
+          res.send(ticket);
+        } catch (error) {
+          console.error("Get ticket error:", error);
+          res.status(500).send({ message: "Failed to get ticket" });
+        }
+      },
+    );
+
+    // 2. Ticket update করা
+    app.patch("/vendor/my-tickets/:id",
+      verifyToken,
+      sellerVerify,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: "Invalid ticket ID" });
+          }
+
+          const filter = {
+            _id: new ObjectId(id),
+            userId: req.user.id,
+          };
+
+          const ticket = await productCollection.findOne(filter);
+
+          if (!ticket) {
+            return res.status(404).send({ message: "Ticket not found" });
+          }
+
+          if (ticket.status === "rejected") {
+            return res.status(403).send({
+              message: "Rejected tickets cannot be updated",
+            });
+          }
+
+          const allowedFields = [
+            "title",
+            "fromLocation",
+            "toLocation",
+            "transportType",
+            "price",
+            "quantity",
+            "image",
+          ];
+
+          const updatedData = {};
+
+          for (const field of allowedFields) {
+            if (req.body[field] !== undefined) {
+              updatedData[field] = req.body[field];
+            }
+          }
+
+          if (
+            !updatedData.title?.trim() ||
+            !updatedData.fromLocation?.trim() ||
+            !updatedData.toLocation?.trim() ||
+            !updatedData.transportType ||
+            updatedData.price === undefined ||
+            updatedData.quantity === undefined
+          ) {
+            return res.status(400).send({
+              message: "Please provide all required ticket fields",
+            });
+          }
+
+          updatedData.price = Number(updatedData.price);
+          updatedData.quantity = Number(updatedData.quantity);
+
+          if (
+            !Number.isFinite(updatedData.price) ||
+            updatedData.price < 0 ||
+            !Number.isInteger(updatedData.quantity) ||
+            updatedData.quantity < 0
+          ) {
+            return res.status(400).send({
+              message: "Invalid price or quantity",
+            });
+          }
+
+          const result = await productCollection.updateOne(
+            {
+              ...filter,
+              status: { $ne: "rejected" },
+            },
+            { $set: updatedData },
+          );
+
+          if (result.matchedCount === 0) {
+            return res.status(403).send({
+              message: "Ticket cannot be updated",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "Ticket updated successfully",
+          });
+        } catch (error) {
+          console.error("Update ticket error:", error);
+          res.status(500).send({ message: "Failed to update ticket" });
+        }
+      },
+    );
+
+    // 3. Ticket delete করা
+    app.delete( "/vendor/my-tickets/:id",
+      verifyToken,
+      sellerVerify,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+
+          if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: "Invalid ticket ID" });
+          }
+
+          const filter = {
+            _id: new ObjectId(id),
+            userId: req.user.id,
+          };
+
+          const ticket = await productCollection.findOne(filter);
+
+          if (!ticket) {
+            return res.status(404).send({ message: "Ticket not found" });
+          }
+
+          if (ticket.status === "rejected") {
+            return res.status(403).send({
+              message: "Rejected tickets cannot be deleted",
+            });
+          }
+
+          const result = await productCollection.deleteOne({
+            ...filter,
+            status: { $ne: "rejected" },
+          });
+
+          if (result.deletedCount === 0) {
+            return res.status(403).send({
+              message: "Ticket cannot be deleted",
+            });
+          }
+
+          res.send({
+            success: true,
+            message: "Ticket deleted successfully",
+          });
+        } catch (error) {
+          console.error("Delete ticket error:", error);
+          res.status(500).send({ message: "Failed to delete ticket" });
+        }
+      },
+    );
+
     //every ticket page by id
     app.get("/product/:id", async (req, res) => {
       const { id } = req.params;

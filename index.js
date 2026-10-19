@@ -472,7 +472,8 @@ async function run() {
     });
 
     //My- Tickets
-    app.get("/vendor/my-tickets",
+    app.get(
+      "/vendor/my-tickets",
       verifyToken,
       sellerVerify,
       async (req, res) => {
@@ -492,7 +493,8 @@ async function run() {
     );
 
     // 1. একটি ticket-এর তথ্য আনা
-    app.get("/vendor/my-tickets/:id",
+    app.get(
+      "/vendor/my-tickets/:id",
       verifyToken,
       sellerVerify,
       async (req, res) => {
@@ -521,7 +523,8 @@ async function run() {
     );
 
     // 2. Ticket update করা
-    app.patch("/vendor/my-tickets/:id",
+    app.patch(
+      "/vendor/my-tickets/:id",
       verifyToken,
       sellerVerify,
       async (req, res) => {
@@ -620,7 +623,8 @@ async function run() {
     );
 
     // 3. Ticket delete করা
-    app.delete( "/vendor/my-tickets/:id",
+    app.delete(
+      "/vendor/my-tickets/:id",
       verifyToken,
       sellerVerify,
       async (req, res) => {
@@ -678,6 +682,190 @@ async function run() {
       });
 
       res.send(result);
+    });
+
+    // ====================== Vendor: Requested Bookings ======================
+
+    // ১. Vendor এর সব Pending বুকিং আনা
+    app.get("/vendor/requested-bookings", verifyToken, async (req, res) => {
+      try {
+        const vendorId = req.user.id;
+
+        // Vendor এর সব টিকেট বের করো
+        const vendorTickets = await productCollection
+          .find({ userId: vendorId })
+          .project({ _id: 1, title: 1, price: 1 })
+          .toArray();
+
+        const ticketIds = vendorTickets.map((ticket) => ticket._id.toString());
+
+        if (ticketIds.length === 0) {
+          return res.send([]);
+        }
+
+        // শুধু Pending বুকিংগুলো আনো
+        const bookings = await bookingCollection
+          .find({
+            ticketId: { $in: ticketIds },
+            status: "Pending",
+          })
+          .toArray();
+
+        // প্রতিটা বুকিং এর সাথে User + Ticket info যোগ করো
+        const result = await Promise.all(
+          bookings.map(async (booking) => {
+            const ticket = vendorTickets.find(
+              (t) => t._id.toString() === booking.ticketId,
+            );
+
+            const user = await userCollection.findOne(
+              { _id: new ObjectId(booking.userId) },
+              { projection: { name: 1, email: 1 } },
+            );
+
+            return {
+              _id: booking._id,
+              quantity: booking.quantity,
+              status: booking.status,
+              ticketTitle: ticket?.title || "Unknown",
+              unitPrice: ticket?.price || 0,
+              totalPrice: (ticket?.price || 0) * booking.quantity,
+              userName: user?.name || "Unknown",
+              userEmail: user?.email || "Unknown",
+            };
+          }),
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to get requested bookings" });
+      }
+    });
+
+    // ২. Accept Booking
+    app.patch("/bookings/:id/accept", verifyToken, async (req, res) => {
+      try {
+        const bookingId = req.params.id;
+        const vendorId = req.user.id;
+
+        // বুকিং খুঁজে বের করো
+        const booking = await bookingCollection.findOne({
+          _id: new ObjectId(bookingId),
+        });
+
+        if (!booking) {
+          return res.status(404).send({ message: "Booking not found" });
+        }
+
+        // টিকেটটা এই vendor এর কিনা চেক করো
+        const ticket = await productCollection.findOne({
+          _id: new ObjectId(booking.ticketId),
+          userId: vendorId,
+        });
+
+        if (!ticket) {
+          return res.status(403).send({ message: "Unauthorized" });
+        }
+
+        // শুধু status আপডেট করো
+        const result = await bookingCollection.updateOne(
+          { _id: new ObjectId(bookingId) },
+          { $set: { status: "accepted" } },
+        );
+
+        res.send({
+          success: true,
+          message: "Booking accepted successfully",
+          result,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to accept booking" });
+      }
+    });
+
+    // ৩. Reject Booking
+    app.patch("/bookings/:id/reject", verifyToken, async (req, res) => {
+      try {
+        const bookingId = req.params.id;
+        const vendorId = req.user.id;
+
+        const booking = await bookingCollection.findOne({
+          _id: new ObjectId(bookingId),
+        });
+
+        if (!booking) {
+          return res.status(404).send({ message: "Booking not found" });
+        }
+
+        const ticket = await productCollection.findOne({
+          _id: new ObjectId(booking.ticketId),
+          userId: vendorId,
+        });
+
+        if (!ticket) {
+          return res.status(403).send({ message: "Unauthorized" });
+        }
+
+        const result = await bookingCollection.updateOne(
+          { _id: new ObjectId(bookingId) },
+          { $set: { status: "rejected" } },
+        );
+
+        res.send({
+          success: true,
+          message: "Booking rejected successfully",
+          result,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to reject booking" });
+      }
+    });
+
+    // ====================== User: My Booked Tickets ======================
+    app.get("/user/my-bookings", verifyToken, async (req, res) => {
+      try {
+        const userId = req.user.id;
+
+        // ইউজারের সব বুকিং আনো
+        const bookings = await bookingCollection
+          .find({ userId: userId })
+          .sort({ _id: -1 })
+          .toArray();
+
+        if (bookings.length === 0) {
+          return res.send([]);
+        }
+
+        // প্রতিটা বুকিং এর সাথে টিকেটের তথ্য যোগ করো
+        const result = await Promise.all(
+          bookings.map(async (booking) => {
+            const ticket = await productCollection.findOne({
+              _id: new ObjectId(booking.ticketId),
+            });
+
+            return {
+              _id: booking._id,
+              quantity: booking.quantity,
+              status: booking.status,
+              ticketTitle: ticket?.title || "Unknown Ticket",
+              ticketImage: ticket?.image || "",
+              fromLocation: ticket?.fromLocation || "",
+              toLocation: ticket?.toLocation || "",
+              departureDateTime: ticket?.departureDateTime || "",
+              unitPrice: ticket?.price || 0,
+              totalPrice: (ticket?.price || 0) * booking.quantity,
+            };
+          }),
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to get my bookings" });
+      }
     });
 
     //TODO: create payment data store api

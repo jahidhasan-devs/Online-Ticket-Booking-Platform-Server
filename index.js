@@ -115,18 +115,159 @@ async function run() {
 
     //payment ar jonno
     app.post("/payment", async (req, res) => {
-      const {price,productId, sessionId, userId, priceId } = req.body;
+      try {
+        const paymentData = req.body;
 
-      const isExist = await paymentCollection.findOne({ sessionId });
-      if (isExist) {
-        return res.json({ msg: "Already exist!" });
+        // ১. পেমেন্ট রেকর্ড payments কালেকশনে ইনসার্ট করা
+        const paymentRecord = {
+          ...paymentData,
+          createdAt: new Date(),
+        };
+
+        const insertResult = await paymentCollection.insertOne(paymentRecord);
+        // ২. যদি bookingId থাকে, তবে বুকিংটির status 'paid' আপডেট করা
+        if (paymentData.bookingId) {
+          let filter;
+          try {
+            filter = { _id: new ObjectId(paymentData.bookingId) };
+          } catch {
+            filter = { _id: paymentData.bookingId };
+          }
+          await bookingCollection.updateOne(filter, {
+            $set: {
+              status: "paid",
+              paymentStatus: "paid",
+              transactionId:
+                paymentData.transactionId || paymentData.session_id || "",
+              paidAt: new Date(),
+            },
+          });
+        }
+        res.status(201).send({
+          success: true,
+          message: "Payment recorded successfully",
+          insertedId: insertResult.insertedId,
+        });
+      } catch (error) {
+        console.error("Error saving payment:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to record payment",
+          error: error.message,
+        });
       }
-
-     const pay_result= await paymentCollection.insertOne({ sessionId, userId, priceId ,title});
-
-      res.send({ pay_result });
     });
 
+    // 3. GET /payment (ইউজারের সব পেমেন্ট হিস্ট্রি ফেচ করা
+    app.get("/payment", async (req, res) => {
+      try {
+        const email = req.query.email;
+        let query = {};
+        // ইমেইল দিয়ে ফিল্টার করা (লগইন করা ইউজারের ডেটা পেতে)
+        if (email) {
+          query = {
+            $or: [
+              { userEmail: email },
+              { customer_email: email },
+              { email: email },
+            ],
+          };
+        }
+        // নতুন ট্রানজ্যাকশনগুলো সবার উপরে দেখানোর জন্য সর্ট করা
+        const payments = await paymentCollection
+          .find(query)
+          .sort({ createdAt: -1, _id: -1 })
+          .toArray();
+        res.status(200).send(payments);
+      } catch (error) {
+        console.error("Error fetching payments:", error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch payments",
+          error: error.message,
+        });
+      }
+    });
+
+    // ==========================================
+    // Vendor Revenue Overview API (Title-based Query without Status Check)
+    // ==========================================
+    app.get( "/vendor/revenue-stats",
+      verifyToken,
+      sellerVerify,
+      async (req, res) => {
+        try {
+          console.log("1. Vendor Email from token:", req.user.email);
+
+          // ১. পেমেন্ট কালেকশন থেকে টাইটেল অনুযায়ী সব রেকর্ড ফেচ করা (status চেক করার দরকার নেই)
+          const paidPayments = await paymentCollection
+            .find({
+              $or: [
+                { ticketTitle: { $exists: true, $ne: "" } },
+                { title: { $exists: true, $ne: "" } },
+              ],
+            })
+            .sort({ createdAt: -1, _id: -1 })
+            .toArray();
+
+          console.log(
+            "2. Total transactions found in payment collection:",
+            paidPayments.length,
+          );
+
+          // ২. হিসাব-নিকাশ
+          const now = new Date();
+          const startOfToday = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+          let totalRevenue = 0;
+          let todayRevenue = 0;
+          let monthRevenue = 0;
+
+          paidPayments.forEach((payment) => {
+            const amount = Number(payment.amount || payment.price || 0);
+            const paymentDate = new Date(
+              payment.createdAt || payment.paymentDate || Date.now(),
+            );
+
+            totalRevenue += amount;
+
+            if (paymentDate >= startOfToday) {
+              todayRevenue += amount;
+            }
+
+            if (paymentDate >= startOfMonth) {
+              monthRevenue += amount;
+            }
+          });
+
+          // ৩. সাম্প্রতিক ১০টি ট্রানজ্যাকশন
+          const recentTransactions = paidPayments.slice(0, 10);
+
+          res.status(200).send({
+            success: true,
+            data: {
+              totalRevenue,
+              todayRevenue,
+              monthRevenue,
+              totalBookings: paidPayments.length,
+              recentTransactions,
+            },
+          });
+        } catch (error) {
+          console.error("Error fetching vendor revenue:", error);
+          res.status(500).send({
+            success: false,
+            message: "Server error fetching revenue data",
+            error: error.message,
+          });
+        }
+      },
+    );
     // Ticket gula post kora hoy
     app.post("/vendor/tickets", verifyToken, sellerVerify, async (req, res) => {
       try {

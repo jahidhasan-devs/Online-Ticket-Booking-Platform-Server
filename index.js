@@ -189,10 +189,9 @@ async function run() {
       }
     });
 
-    // ==========================================
     // Vendor Revenue Overview API (Title-based Query without Status Check)
-    // ==========================================
-    app.get( "/vendor/revenue-stats",
+    app.get(
+      "/vendor/revenue-stats",
       verifyToken,
       sellerVerify,
       async (req, res) => {
@@ -526,8 +525,7 @@ async function run() {
     );
 
     //Admin page status approve jonno // seller verify add korce
-    app.patch(
-      "/admin/tickets/:id",
+    app.patch("/admin/tickets/:id",
       verifyToken,
       adminVerify,
       async (req, res) => {
@@ -589,36 +587,128 @@ async function run() {
       res.send({ data: result, page: Number(page), totalPage });
     });
 
+    // admin all data jonno
+    app.get("/admin/all-tickets", async (req, res) => {
+      try {
+        const tickets = await productCollection
+          .find({})
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(tickets);
+      } catch (error) {
+        console.error("Admin tickets fetch error:", error);
+        res.status(500).send({ message: "Failed to fetch admin tickets" });
+      }
+    });
+
     // All products / tickets
     app.get("/products", async (req, res) => {
       try {
-        const { search } = req.query;
-        const query = {};
+        const {
+          search,
+          from,
+          to,
+          transportType,
+          sort,
+          status,
+          page = 1,
+          limit = 8,
+        } = req.query;
 
-        // Search filter
-        if (search && search !== "undefined") {
-          query.$or = [
-            { title: { $regex: search, $options: "i" } },
-            { description: { $regex: search, $options: "i" } },
-          ];
+        const andConditions = [];
+
+        // ১. Status Filter
+        if (status && status !== "undefined" && status.trim() !== "") {
+          andConditions.push({ status: status.trim() });
         }
 
-        // Get fraud vendor IDs
+        // ২. Title / Keyword Search (Title, Description, VendorName)
+        if (search && search !== "undefined" && search.trim() !== "") {
+          const searchRegex = new RegExp(search.trim(), "i");
+          andConditions.push({
+            $or: [
+              { title: { $regex: searchRegex } },
+              { description: { $regex: searchRegex } },
+              { vendorName: { $regex: searchRegex } },
+            ],
+          });
+        }
+
+        // ৩. Departure Location Search (fromLocation)
+        if (from && from !== "undefined" && from.trim() !== "") {
+          andConditions.push({
+            fromLocation: { $regex: new RegExp(from.trim(), "i") },
+          });
+        }
+
+        // ৪. Destination Location Search (toLocation)
+        if (to && to !== "undefined" && to.trim() !== "") {
+          andConditions.push({
+            toLocation: { $regex: new RegExp(to.trim(), "i") },
+          });
+        }
+
+        // ৫. Transport Type Filter
+        if (
+          transportType &&
+          transportType !== "all" &&
+          transportType !== "undefined" &&
+          transportType.trim() !== ""
+        ) {
+          andConditions.push({
+            transportType: {
+              $regex: new RegExp(`^${transportType.trim()}$`, "i"),
+            },
+          });
+        }
+
+        // ৬. Fraud Users Filter
         const fraudUsers = await userCollection
           .find({ role: "vendor", isFraud: true })
           .project({ _id: 1 })
           .toArray();
 
         const fraudUserIds = fraudUsers.map((user) => user._id.toString());
-
-        // Hide fraud vendors' tickets
         if (fraudUserIds.length > 0) {
-          query.userId = { $nin: fraudUserIds };
+          andConditions.push({
+            userId: { $nin: fraudUserIds },
+          });
         }
 
-        const result = await productCollection.find(query).toArray();
+        // ৭. ফাইনাল MongoDB Query
+        const query = andConditions.length > 0 ? { $and: andConditions } : {};
 
-        res.send(result);
+        // ৮. Price Sorting (Number conversion safe)
+        let sortOptions = {};
+        if (sort === "lowToHigh") {
+          sortOptions.price = 1;
+        } else if (sort === "highToLow") {
+          sortOptions.price = -1;
+        } else {
+          sortOptions._id = -1; // Default: Newest first
+        }
+
+        // ৯. Pagination
+        const pageNum = parseInt(page) || 1;
+        const limitNum = parseInt(limit) || 8;
+        const skip = (pageNum - 1) * limitNum;
+
+        const totalTickets = await productCollection.countDocuments(query);
+        const totalPages = Math.ceil(totalTickets / limitNum) || 1;
+
+        const tickets = await productCollection
+          .find(query)
+          .sort(sortOptions)
+          .skip(skip)
+          .limit(limitNum)
+          .toArray();
+
+        res.send({
+          tickets,
+          totalTickets,
+          totalPages,
+          currentPage: pageNum,
+        });
       } catch (error) {
         console.error("Fetch products error:", error);
         res.status(500).send({
@@ -628,8 +718,7 @@ async function run() {
     });
 
     //My- Tickets
-    app.get(
-      "/vendor/my-tickets",
+    app.get("/vendor/my-tickets",
       verifyToken,
       sellerVerify,
       async (req, res) => {

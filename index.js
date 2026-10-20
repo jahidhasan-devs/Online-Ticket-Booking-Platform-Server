@@ -87,12 +87,13 @@ async function run() {
     await client.connect();
     const db = client.db("ticket-booking-platform");
     const subscriptionsCollection = db.collection("subscriptions");
+    const paymentCollection = db.collection("payments");
     const userCollection = db.collection("user");
     const productCollection = db.collection("Tickets");
     const bookingCollection = db.collection("Bookings");
     const advertisedCollection = db.collection("AdvertisedTickets");
 
-    //payment ar jonno
+    //subcription ar jonno
     app.post("/subscription", async (req, res) => {
       const { sessionId, userId, priceId } = req.body;
 
@@ -110,6 +111,20 @@ async function run() {
       );
 
       res.json({ msg: "Payment successfull!" });
+    });
+
+    //payment ar jonno
+    app.post("/payment", async (req, res) => {
+      const {price,productId, sessionId, userId, priceId } = req.body;
+
+      const isExist = await paymentCollection.findOne({ sessionId });
+      if (isExist) {
+        return res.json({ msg: "Already exist!" });
+      }
+
+     const pay_result= await paymentCollection.insertOne({ sessionId, userId, priceId ,title});
+
+      res.send({ pay_result });
     });
 
     // Ticket gula post kora hoy
